@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="fa">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+  <title>AR Multi Markers (Reactive)</title>
+  <style>
+    html,body{height:100%;margin:0;background:#000;font-family:sans-serif;overflow:hidden;}
+    #message{position:fixed;left:50%;top:20px;transform:translateX(-50%);color:white;background:rgba(0,0,0,0.5);padding:6px 12px;border-radius:8px;font-size:14px;z-index:100;}
+    canvas{display:block;touch-action:none;}
+  </style>
+</head>
+<body>
+<div id="message">در حال راه‌اندازی AR...</div>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
+import { ARButton } from 'https://unpkg.com/three@0.152.2/examples/jsm/webxr/ARButton.js';
+
+let camera, scene, renderer, controller;
+const clock = new THREE.Clock();
+const markers = [];
+const colors = [0x4dd0e1, 0xff7ab6, 0x7b61ff, 0x6ee07a];
+const message = document.getElementById('message');
+
+function showMsg(txt, t=2500){
+  message.textContent = txt;
+  clearTimeout(message._t);
+  message._t = setTimeout(()=>message.textContent='', t);
+}
+
+function initThree(){
+  renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.xr.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  scene = new THREE.Scene();
+
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 100);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const light = new THREE.DirectionalLight(0xffffff, 0.8);
+  light.position.set(1,1,1);
+  scene.add(light);
+
+  window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+}
+
+// create hollow sphere marker
+function createMarker(label="marker"){
+  const group = new THREE.Group();
+
+  const sphereGeo = new THREE.SphereGeometry(0.07, 24, 16);
+  const sphereMat = new THREE.MeshBasicMaterial({
+    color: colors[Math.floor(Math.random()*colors.length)],
+    wireframe:true
+  });
+  const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+  group.add(sphere);
+
+  const canvas = document.createElement('canvas');
+  canvas.width=256; canvas.height=64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(0,0,256,64);
+  ctx.font='bold 28px sans-serif';
+  ctx.fillStyle='white';
+  ctx.textAlign='center';
+  ctx.fillText(label,128,44);
+  const texture = new THREE.CanvasTexture(canvas);
+  const labelMat = new THREE.MeshBasicMaterial({map:texture, transparent:true});
+  const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.25,0.07), labelMat);
+  labelMesh.position.set(0,0.15,0);
+  group.add(labelMesh);
+
+  group.userData = { basePos: new THREE.Vector3(), active:false };
+  return group;
+}
+
+// tap handler
+function onSelect() {
+  const raycaster = new THREE.Raycaster();
+  const tempMatrix = new THREE.Matrix4().identity().extractRotation(controller.matrixWorld);
+  raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+  const intersects = raycaster.intersectObjects(markers, true);
+  if (intersects.length > 0) {
+    const obj = intersects[0].object.parent;
+    scene.remove(obj);
+    markers.splice(markers.indexOf(obj), 1);
+    showMsg('مارکر حذف شد');
+    return;
+  }
+
+  const pos = new THREE.Vector3();
+  pos.setFromMatrixPosition(controller.matrixWorld);
+  const dir = new THREE.Vector3(0,0,-1).applyMatrix4(tempMatrix).multiplyScalar(0.4);
+  pos.add(dir);
+
+  const label = `مارکر ${markers.length+1}`;
+  const marker = createMarker(label);
+  marker.position.copy(pos);
+  marker.userData.basePos.copy(pos);
+  scene.add(marker);
+  markers.push(marker);
+  showMsg(`مارکر ${markers.length} افزوده شد`);
+}
+
+// animate markers (rotation + reactive effect)
+function animateMarkers(delta){
+  const time = performance.now() * 0.002;
+
+  for(const m of markers){
+    const sphere = m.children[0];
+    const label = m.children[1];
+
+    // make label face camera
+    label.lookAt(camera.position);
+    m.rotation.y += delta * 0.5;
+
+    const dist = camera.position.distanceTo(m.position);
+    const near = dist < 1.0;
+
+    if(near){
+      // vibrate + pulse light
+      const amp = 0.01;
+      m.position.x = m.userData.basePos.x + Math.sin(time*20)*amp;
+      m.position.y = m.userData.basePos.y + Math.cos(time*25)*amp;
+      sphere.material.color.offsetHSL(Math.sin(time*5)*0.002, 0, 0); // color pulse
+    } else {
+      // return to normal position
+      m.position.copy(m.userData.basePos);
+    }
+  }
+}
+
+// --- اضافه کردن درخواست دسترسی به دوربین ---
+async function requestCameraPermission(){
+  if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // فقط برای گرفتن permission، بعداً stop کن
+      stream.getTracks().forEach(track => track.stop());
+      console.log("Camera permission granted");
+    } catch(err){
+      console.error("Camera permission denied", err);
+      showMsg("دوربین اجازه داده نشد");
+    }
+  }
+}
+
+async function startAR(){
+  await requestCameraPermission(); // <-- اینجا اضافه شد
+
+  if(!renderer) initThree();
+  const arButton = ARButton.createButton(renderer, {requiredFeatures: []});
+  arButton.style.display='none';
+  document.body.appendChild(arButton);
+
+  renderer.setAnimationLoop(render);
+  const sessionPromise = new Promise((resolve)=>{
+    renderer.xr.addEventListener('sessionstart', ()=>resolve(true));
+    renderer.xr.addEventListener('sessionend', ()=>resolve(false));
+    arButton.click(); // auto start
+  });
+  const started = await sessionPromise;
+  if(!started){ showMsg('AR شروع نشد'); return; }
+
+  controller = renderer.xr.getController(0);
+  controller.addEventListener('select', onSelect);
+  scene.add(controller);
+
+  showMsg('برای افزودن مارکر، در هر جهت لمس کن');
+}
+
+function render(){
+  const delta = clock.getDelta();
+  animateMarkers(delta);
+  renderer.render(scene, camera);
+}
+
+initThree();
+startAR();
+</script>
+</body>
+</html>
