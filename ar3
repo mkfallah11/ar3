@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
-  <title>AR Multi Markers (Reactive)</title>
+  <title>AR Image Markers</title>
   <style>
     html,body{height:100%;margin:0;background:#000;font-family:sans-serif;overflow:hidden;}
     #message{position:fixed;left:50%;top:20px;transform:translateX(-50%);color:white;background:rgba(0,0,0,0.5);padding:6px 12px;border-radius:8px;font-size:14px;z-index:100;}
@@ -20,7 +20,6 @@ import { ARButton } from 'https://unpkg.com/three@0.152.2/examples/jsm/webxr/ARB
 let camera, scene, renderer, controller;
 const clock = new THREE.Clock();
 const markers = [];
-const colors = [0x4dd0e1, 0xff7ab6, 0x7b61ff, 0x6ee07a];
 const message = document.getElementById('message');
 
 function showMsg(txt, t=2500){
@@ -51,17 +50,16 @@ function initThree(){
   });
 }
 
-// create hollow sphere marker
 function createMarker(label="marker"){
   const group = new THREE.Group();
+  const loader = new THREE.TextureLoader();
 
-  const sphereGeo = new THREE.SphereGeometry(0.07, 24, 16);
-  const sphereMat = new THREE.MeshBasicMaterial({
-    color: colors[Math.floor(Math.random()*colors.length)],
-    wireframe:true
+  loader.load('hamed.png', function(texture){
+    const sphereGeo = new THREE.SphereGeometry(0.07, 24, 16);
+    const sphereMat = new THREE.MeshBasicMaterial({ map: texture, transparent:true });
+    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+    group.add(sphere);
   });
-  const sphere = new THREE.Mesh(sphereGeo, sphereMat);
-  group.add(sphere);
 
   const canvas = document.createElement('canvas');
   canvas.width=256; canvas.height=64;
@@ -82,7 +80,6 @@ function createMarker(label="marker"){
   return group;
 }
 
-// tap handler
 function onSelect() {
   const raycaster = new THREE.Raycaster();
   const tempMatrix = new THREE.Matrix4().identity().extractRotation(controller.matrixWorld);
@@ -112,52 +109,27 @@ function onSelect() {
   showMsg(`مارکر ${markers.length} افزوده شد`);
 }
 
-// animate markers (rotation + reactive effect)
 function animateMarkers(delta){
   const time = performance.now() * 0.002;
-
   for(const m of markers){
     const sphere = m.children[0];
     const label = m.children[1];
-
-    // make label face camera
+    if(!sphere || !label) continue;
     label.lookAt(camera.position);
     m.rotation.y += delta * 0.5;
-
     const dist = camera.position.distanceTo(m.position);
     const near = dist < 1.0;
-
     if(near){
-      // vibrate + pulse light
       const amp = 0.01;
       m.position.x = m.userData.basePos.x + Math.sin(time*20)*amp;
       m.position.y = m.userData.basePos.y + Math.cos(time*25)*amp;
-      sphere.material.color.offsetHSL(Math.sin(time*5)*0.002, 0, 0); // color pulse
     } else {
-      // return to normal position
       m.position.copy(m.userData.basePos);
     }
   }
 }
 
-// --- اضافه کردن درخواست دسترسی به دوربین ---
-async function requestCameraPermission(){
-  if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      // فقط برای گرفتن permission، بعداً stop کن
-      stream.getTracks().forEach(track => track.stop());
-      console.log("Camera permission granted");
-    } catch(err){
-      console.error("Camera permission denied", err);
-      showMsg("دوربین اجازه داده نشد");
-    }
-  }
-}
-
 async function startAR(){
-  await requestCameraPermission(); // <-- اینجا اضافه شد
-
   if(!renderer) initThree();
   const arButton = ARButton.createButton(renderer, {requiredFeatures: []});
   arButton.style.display='none';
@@ -167,7 +139,7 @@ async function startAR(){
   const sessionPromise = new Promise((resolve)=>{
     renderer.xr.addEventListener('sessionstart', ()=>resolve(true));
     renderer.xr.addEventListener('sessionend', ()=>resolve(false));
-    arButton.click(); // auto start
+    arButton.click();
   });
   const started = await sessionPromise;
   if(!started){ showMsg('AR شروع نشد'); return; }
@@ -176,7 +148,7 @@ async function startAR(){
   controller.addEventListener('select', onSelect);
   scene.add(controller);
 
-  showMsg('برای افزودن مارکر، در هر جهت لمس کن');
+  showMsg('برای افزودن مارکر، لمس کن');
 }
 
 function render(){
